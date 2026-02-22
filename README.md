@@ -66,5 +66,3 @@ Scheduling
 Troubleshooting
 - If `requests` warns about character detection, install `charset_normalizer` (included in `requirements.txt`).
 - If the sheet name or workbook path differs, pass `--workbook` or edit `WORKBOOK_PATH` in the script.
-
-If you want I can: pin dependency versions, add logging, or create a launchd plist for macOS.
