@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Update only the current prices sheet cells.
+
+This script updates the `Current Prices` sheet only:
+- `B2` = Gold price (fetched from Stooq `gc.f`)
+- `B3` = Silver price (fetched from Stooq `si.f`)
+
+Defaults to the Dropbox workbook path used previously. Use `--workbook` to override.
+"""
+
+from __future__ import annotations
+
+import csv
+from datetime import datetime
+from pathlib import Path
+import shutil
+import argparse
+import requests
+from openpyxl import load_workbook
+
+
+# Default workbook path (adjust manually if needed)
+WORKBOOK_PATH = Path.home() / "Dropbox" / "Excel Shared" / "Precious Metal Investments.xlsx"
+SHEET_NAME = "Current Prices"
+
+
+def fetch_last_close(symbol: str) -> float:
+	url = f"https://stooq.com/q/d/l/?s={symbol}&i=d"
+	r = requests.get(url, timeout=20)
+	r.raise_for_status()
+	rows = list(csv.DictReader(r.text.splitlines()))
+
+	if not rows:
+		alt_url = f"https://stooq.com/q/l/?s={symbol}&f=sd2t2ohlc&h&e=csv"
+		r = requests.get(alt_url, timeout=20)
+		r.raise_for_status()
+		rows = list(csv.DictReader(r.text.splitlines()))
+
+	if not rows:
+		raise RuntimeError(f"No data returned for {symbol}")
+
+	close = float(rows[-1]["Close"])
+	# Silver sometimes in cents
+	if symbol.lower() == "si.f" and close > 500:
+		close = close / 100.0
+	return close
+
+
+def backup_workbook(path: Path) -> Path:
+	stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+	dst = path.with_name(f"{path.stem}.backup.{stamp}{path.suffix}")
+	shutil.copy2(path, dst)
+	return dst
+
+
+def update_current_prices(workbook: Path, dry_run: bool = False) -> tuple[float, float]:
+	if not workbook.exists():
+		raise FileNotFoundError(f"Workbook not found: {workbook}")
+
+	gold = fetch_last_close("gc.f")
+	silver = fetch_last_close("si.f")
+
+	date_str = datetime.now().strftime("%Y-%m-%d")
+	if dry_run:
+		print(
+			f"Dry run: would write Gold={gold:.2f}, Silver={silver:.2f} and Date={date_str} to '{SHEET_NAME}' B2/B3 and C2/C3"
+		)
+		return gold, silver
+
+	# backup
+	bak = backup_workbook(workbook)
+	print(f"Backup created: {bak}")
+
+	wb = load_workbook(workbook)
+	if SHEET_NAME not in wb.sheetnames:
+		raise RuntimeError(f"Sheet '{SHEET_NAME}' not found in workbook")
+
+	ws = wb[SHEET_NAME]
+
+	ws["B2"].value = round(gold, 2)
+	ws["B2"].number_format = "$#,##0.00"
+
+	ws["B3"].value = round(silver, 2)
+	ws["B3"].number_format = "$#,##0.00"
+
+	# Write current date to column C for the price entries
+	today = datetime.now().date()
+	ws["C2"].value = today
+	ws["C2"].number_format = "m/d/yy"
+	ws["C3"].value = today
+	ws["C3"].number_format = "m/d/yy"
+
+	wb.save(workbook)
+	print(f"Updated '{SHEET_NAME}' B2/B3 with current prices.")
+	return gold, silver
+
+
+def main() -> None:
+	parser = argparse.ArgumentParser(description="Update Current Prices sheet (B2/B3)")
+	parser.add_argument("--workbook", type=Path, default=WORKBOOK_PATH, help="Path to workbook")
+	parser.add_argument("--dry-run", action="store_true", help="Don't write changes; just fetch and show values")
+	args = parser.parse_args()
+
+	gold, silver = update_current_prices(args.workbook, dry_run=args.dry_run)
+	print(f"Gold: ${gold:.2f}  Silver: ${silver:.2f}")
+
+
+if __name__ == "__main__":
+	main()
